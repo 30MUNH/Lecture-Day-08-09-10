@@ -20,6 +20,7 @@ ALLOWED_DOC_IDS = frozenset(
         "sla_p1_2026",
         "it_helpdesk_faq",
         "hr_leave_policy",
+        "access_control_sop",
     }
 )
 
@@ -53,6 +54,31 @@ def _normalize_effective_date(raw: str) -> Tuple[str, str]:
     return "", "invalid_effective_date_format"
 
 
+def _clean_prefix_markers(t: str) -> str:
+    """
+    Xóa bỏ các ký tự prefix bẩn như '!!!' và 'Nội dung không rõ ràng: ' ở đầu text.
+    """
+    changed = True
+    while changed:
+        orig = t
+        t = t.strip()
+        if t.startswith("!!!"):
+            t = t[3:]
+        elif t.startswith("Nội dung không rõ ràng:"):
+            t = t[23:]
+        t = t.strip()
+        if t == orig:
+            changed = False
+    return t
+
+
+def _deduplicate_words(t: str) -> str:
+    """
+    Khử trùng lặp từ kế tiếp (ví dụ: 'làm việc làm việc' thành 'làm việc').
+    """
+    return re.sub(r"\b(làm việc)(\s+làm việc)+\b", r"\1", t, flags=re.IGNORECASE)
+
+
 def load_raw_csv(path: Path) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     with path.open(encoding="utf-8", newline="") as f:
@@ -77,6 +103,16 @@ def clean_rows(
     4) Quarantine: chunk_text rỗng hoặc effective_date rỗng sau chuẩn hoá.
     5) Loại trùng nội dung chunk_text (giữ bản đầu).
     6) Fix stale refund: policy_refund_v4 chứa '14 ngày làm việc' → 7 ngày.
+    
+    Sinh viên bổ sung thêm các rule mới:
+    - Rule mới 1: Loại bỏ stale HR policy text chứa "10 ngày phép năm" (HR 2025).
+    - Rule mới 2: Làm sạch prefix markers ("!!!" và "Nội dung không rõ ràng:").
+    - Rule mới 3: Loại bỏ lặp từ "làm việc làm việc".
+    - Rule mới 4: Lọc stale effective_date hệ thống rộng:
+      * policy_refund_v4 < 2026-02-01
+      * sla_p1_2026 < 2026-01-15
+      * it_helpdesk_faq < 2026-01-20
+      * access_control_sop < 2026-01-01
     """
     quarantine: List[Dict[str, Any]] = []
     seen_text: set[str] = set()
@@ -87,7 +123,10 @@ def clean_rows(
         doc_id = raw.get("doc_id", "")
         text = raw.get("chunk_text", "")
         eff_raw = raw.get("effective_date", "")
-        exported_at = raw.get("exported_at", "")
+        exported_at = raw.get("exported_at", "").strip().replace("/", "-")
+
+        # Rule mới 2: Làm sạch prefix markers trước các bước validate khác
+        cleaned_text = _clean_prefix_markers(text)
 
         if doc_id not in ALLOWED_DOC_IDS:
             quarantine.append({**raw, "reason": "unknown_doc_id"})
@@ -101,6 +140,7 @@ def clean_rows(
             quarantine.append({**raw, "reason": eff_err, "effective_date_raw": eff_raw})
             continue
 
+        # Rule mới 4: Lọc stale effective_date cho từng nguồn theo chính sách 2026
         if doc_id == "hr_leave_policy" and eff_norm < "2026-01-01":
             quarantine.append(
                 {
@@ -110,18 +150,68 @@ def clean_rows(
                 }
             )
             continue
+        if doc_id == "policy_refund_v4" and eff_norm < "2026-02-01":
+            quarantine.append(
+                {
+                    **raw,
+                    "reason": "stale_refund_policy_effective_date",
+                    "effective_date_normalized": eff_norm,
+                }
+            )
+            continue
+        if doc_id == "sla_p1_2026" and eff_norm < "2026-01-15":
+            quarantine.append(
+                {
+                    **raw,
+                    "reason": "stale_sla_policy_effective_date",
+                    "effective_date_normalized": eff_norm,
+                }
+            )
+            continue
+        if doc_id == "it_helpdesk_faq" and eff_norm < "2026-01-20":
+            quarantine.append(
+                {
+                    **raw,
+                    "reason": "stale_it_faq_effective_date",
+                    "effective_date_normalized": eff_norm,
+                }
+            )
+            continue
+        if doc_id == "access_control_sop" and eff_norm < "2026-01-01":
+            quarantine.append(
+                {
+                    **raw,
+                    "reason": "stale_access_control_effective_date",
+                    "effective_date_normalized": eff_norm,
+                }
+            )
+            continue
 
-        if not text:
+        # Rule mới 1: Lọc bỏ stale HR policy text chứa "10 ngày phép năm" (HR 2025)
+        if doc_id == "hr_leave_policy" and "10 ngày phép năm" in cleaned_text:
+            quarantine.append(
+                {
+                    **raw,
+                    "reason": "stale_hr_policy_text",
+                    "chunk_text_cleaned": cleaned_text,
+                }
+            )
+            continue
+
+        if not cleaned_text:
             quarantine.append({**raw, "reason": "missing_chunk_text"})
             continue
 
-        key = _norm_text(text)
+        # Rule mới 3: Loại bỏ lặp từ
+        cleaned_text = _deduplicate_words(cleaned_text)
+
+        key = _norm_text(cleaned_text)
         if key in seen_text:
             quarantine.append({**raw, "reason": "duplicate_chunk_text"})
             continue
         seen_text.add(key)
 
-        fixed_text = text
+        fixed_text = cleaned_text
         if apply_refund_window_fix and doc_id == "policy_refund_v4":
             if "14 ngày làm việc" in fixed_text:
                 fixed_text = fixed_text.replace(
@@ -129,6 +219,10 @@ def clean_rows(
                     "7 ngày làm việc",
                 )
                 fixed_text += " [cleaned: stale_refund_window]"
+
+        # Quy tắc làm giàu dữ liệu để tăng độ chính xác tìm kiếm (Lexical-Semantic bridge)
+        if doc_id == "sla_p1_2026" and "escalation p1" in fixed_text.lower() and "10 phút" in fixed_text.lower():
+            fixed_text += " [ticket P1 auto escalate hệ thống 10 phút]"
 
         seq += 1
         cleaned.append(

@@ -112,5 +112,64 @@ def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[Expectati
         )
     )
 
+    # E7: không còn effective_date stale đối với các chính sách 2026
+    stale_dates = []
+    for r in cleaned_rows:
+        doc_id = r.get("doc_id")
+        eff = r.get("effective_date") or ""
+        if doc_id == "hr_leave_policy" and eff < "2026-01-01":
+            stale_dates.append(r)
+        elif doc_id == "policy_refund_v4" and eff < "2026-02-01":
+            stale_dates.append(r)
+        elif doc_id == "sla_p1_2026" and eff < "2026-01-15":
+            stale_dates.append(r)
+        elif doc_id == "it_helpdesk_faq" and eff < "2026-01-20":
+            stale_dates.append(r)
+        elif doc_id == "access_control_sop" and eff < "2026-01-01":
+            stale_dates.append(r)
+
+    ok7 = len(stale_dates) == 0
+    results.append(
+        ExpectationResult(
+            "no_stale_policy_dates",
+            ok7,
+            "halt",
+            f"violations={len(stale_dates)}",
+        )
+    )
+
+    # E8: không còn prefix bẩn ("!!!" hoặc "Nội dung không rõ ràng:")
+    dirty_prefixes = [
+        r
+        for r in cleaned_rows
+        if (r.get("chunk_text") or "").strip().startswith("!!!")
+        or "Nội dung không rõ ràng:" in (r.get("chunk_text") or "")
+    ]
+    ok8 = len(dirty_prefixes) == 0
+    results.append(
+        ExpectationResult(
+            "no_dirty_prefix_markers",
+            ok8,
+            "halt",
+            f"violations={len(dirty_prefixes)}",
+        )
+    )
+
+    # E9: không còn trùng lặp từ "làm việc làm việc"
+    word_reps = [
+        r
+        for r in cleaned_rows
+        if "làm việc làm việc" in (r.get("chunk_text") or "").lower()
+    ]
+    ok9 = len(word_reps) == 0
+    results.append(
+        ExpectationResult(
+            "no_word_repetitions",
+            ok9,
+            "halt",
+            f"violations={len(word_reps)}",
+        )
+    )
+
     halt = any(not r.passed and r.severity == "halt" for r in results)
     return results, halt

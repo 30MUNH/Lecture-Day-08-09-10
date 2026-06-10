@@ -291,3 +291,48 @@ Freshness / version → Volume & errors → Schema & contract → Lineage / run_
 - Lab Day 09 (orchestration): [`../../day09/lab/README.md`](../../day09/lab/README.md)
 - Great Expectations (tuỳ chọn nâng cao): https://docs.greatexpectations.io/
 - ChromaDB: https://docs.trychroma.com/
+
+---
+
+## MÔ TẢ HỆ THỐNG LAB DAY 10 (Sinh viên bổ sung)
+
+### 🛠️ Công nghệ sử dụng
+- **Ngôn ngữ**: Python 3.10+
+- **Cơ sở dữ liệu Vector**: ChromaDB (chế độ PersistentClient cục bộ tại `./chroma_db`)
+- **Mô hình nhúng (Embedding)**: `all-MiniLM-L6-v2` từ thư viện `sentence-transformers` (chạy offline trên CPU cục bộ)
+- **Kiểm định chất lượng**: Custom Quality Expectations Suite (lấy cảm hứng từ thư viện Great Expectations)
+- **Định dạng cấu hình**: YAML (cho Data Contract) và JSON (cho Manifest metadata)
+- **Đánh giá chất lượng**: Khung đánh giá tự động dựa trên từ khóa mong đợi và từ khóa cấm (Hits Forbidden & Contains Expected)
+
+### 🔄 Luồng hoạt động (Data Flow)
+1. **Ingest**: Đọc dữ liệu thô từ `data/raw/policy_export_dirty.csv`.
+2. **Transform & Clean (`transform/cleaning_rules.py`)**:
+   - Xác thực `doc_id` hợp lệ bằng allowlist (đã bổ sung `access_control_sop`).
+   - Xóa các prefix bẩn (`!!!`, `Nội dung không rõ ràng:`).
+   - Khử trùng lặp từ kề nhau (`làm việc làm việc`).
+   - Lọc bỏ các dòng HR chứa thông tin 10 ngày phép năm cũ (năm 2025).
+   - Chuẩn hóa ngày tháng hiệu lực của tài liệu và ngày xuất bản `exported_at`.
+   - Làm giàu dữ liệu cho trường hợp escalation P1 để tăng độ chính xác tìm kiếm (Lexical-Semantic Bridge).
+3. **Validate (`quality/expectations.py`)**:
+   - Kiểm tra các ràng buộc: không trống bảng, không trùng lặp, không trống `doc_id`, độ dài chunk hợp lý.
+   - Thêm 3 rule nghiêm ngặt: không chứa ngày hiệu lực stale trước năm 2026 (`no_stale_policy_dates`), không chứa prefix bẩn (`no_dirty_prefix_markers`), không chứa từ lặp (`no_word_repetitions`) với mức độ chặn đứng pipeline (`halt`).
+4. **Quarantine / Clean Split**:
+   - Bản ghi không lỗi sẽ được ghi vào file sạch tại `artifacts/cleaned/cleaned_<run_id>.csv`.
+   - Bản ghi lỗi sẽ bị cách ly vào `artifacts/quarantine/quarantine_<run_id>.csv` kèm lý do lỗi.
+5. **Vector Store Ingest (`etl_pipeline.py`)**:
+   - Nhúng văn bản sạch và đẩy vào ChromaDB bằng phương thức `upsert` thông qua ID ổn định (Hash SHA-256) giúp đảm bảo idempotency (chạy lại không trùng lặp dữ liệu).
+   - Dọn dẹp các ID cũ đã bị xóa khỏi snapshot chạy mới (`pruning`).
+6. **Publish Manifest**:
+   - Xuất thông tin metadata ra tệp `artifacts/manifests/manifest_<run_id>.json`.
+7. **Observability & Freshness Check**:
+   - Tính toán khoảng cách thời gian giữa `latest_exported_at` của dữ liệu và thời điểm hiện tại của hệ thống để so sánh với SLA (24 giờ), đưa ra cảnh báo tươi mới.
+
+### 📁 Bản đồ tệp tin & Thư mục dự án
+- [etl_pipeline.py](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/etl_pipeline.py): Tập tin điều khiển trung tâm chạy pipeline.
+- [transform/cleaning_rules.py](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/transform/cleaning_rules.py): Triển khai các quy tắc dọn dẹp và tiền xử lý dữ liệu.
+- [quality/expectations.py](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/quality/expectations.py): Triển khai các quy tắc kiểm định chất lượng dữ liệu.
+- [monitoring/freshness_check.py](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/monitoring/freshness_check.py): Giám sát độ trễ dữ liệu thô.
+- [contracts/data_contract.yaml](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/contracts/data_contract.yaml): Cam kết định dạng và nguồn cấp dữ liệu tri thức.
+- [grading_run.py](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/grading_run.py): Bộ câu hỏi kiểm thử tri thức.
+- [eval_retrieval.py](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/eval_retrieval.py): Kịch bản chạy đánh giá chất lượng tìm kiếm offline của mô hình RAG.
+- [docs/](file:///d:/Vin/day10/Lecture-Day-08-09-10/day10/lab/docs/): Thư mục tài liệu kiến trúc, data contract, và runbook sự cố.

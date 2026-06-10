@@ -3,7 +3,7 @@
 
 version: "1.0"
 dataset: "kb_chunk_export"
-owner_team: "Team 10 - AI in Action"
+owner_team: "2A202600907-NguyenDinhTienManh"
 
 schema_cleaned:
   chunk_id:

@@ -2,7 +2,6 @@
 
 **Họ và tên:** Nguyễn Đình Tiến Mạnh  
 **MSSV:** 2A202600907  
-**Vai trò:** Ingestion / Cleaning / Embed / Monitoring  
 **Ngày nộp:** 2026-06-10  
 
 ---
